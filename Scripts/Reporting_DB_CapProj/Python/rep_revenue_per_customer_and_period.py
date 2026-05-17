@@ -30,19 +30,101 @@ table_id = 'rep_revenue_per_customer_and_period'
 client = bigquery.Client(project=project_id)
 
 query = """
-CREATE OR REPLACE TABLE `da-capstone-project-kef.Reporting_DB_CapProj.rep_revenue_per_customer_and_period` AS
-SELECT
-    c.customer_id,
-    c.first_name,
-    c.last_name,
-    DATE(p.payment_date) as date,
-    EXTRACT(YEAR FROM p.payment_date) as year,
-    EXTRACT(MONTH FROM p.payment_date) as month,
-    SUM(p.amount) as total_revenue
-FROM `da-capstone-project-kef.Staging_DB_CapProj.stg_customer` c
-JOIN `da-capstone-project-kef.Staging_DB_CapProj.stg_payment` p
-    ON c.customer_id = p.customer_id
-GROUP BY c.customer_id, c.first_name, c.last_name, date, year, month
+
+WITH revenue AS (
+
+    SELECT
+        c.customer_id,
+        c.first_name,
+        c.last_name,
+        p.payment_date,
+        p.amount
+    FROM `da-capstone-project-kef.Staging_DB_CapProj.stg_customer` c
+    JOIN `da-capstone-project-kef.Staging_DB_CapProj.stg_payment` p
+        ON c.customer_id = p.customer_id
+
+)
+
+, reporting_dates AS (
+
+    SELECT *
+    FROM `da-capstone-project-kef.Reporting_DB_CapProj.reporting_periods_table`
+    WHERE reporting_period IN ('Day','Month','Year')
+
+)
+
+, revenue_per_customer_period AS (
+
+    SELECT
+        customer_id,
+        first_name,
+        last_name,
+        'Day' AS reporting_period,
+        DATE_TRUNC(DATE(payment_date), DAY) AS reporting_date,
+        ROUND(SUM(amount),2) AS total_revenue
+    FROM revenue
+    GROUP BY 1,2,3,4,5
+
+    UNION ALL
+
+    SELECT
+        customer_id,
+        first_name,
+        last_name,
+        'Month',
+        DATE_TRUNC(DATE(payment_date), MONTH),
+        ROUND(SUM(amount),2)
+    FROM revenue
+    GROUP BY 1,2,3,4,5
+
+    UNION ALL
+
+    SELECT
+        customer_id,
+        first_name,
+        last_name,
+        'Year',
+        DATE_TRUNC(DATE(payment_date), YEAR),
+         ROUND(SUM(amount),3)
+    FROM revenue
+    GROUP BY 1,2,3,4,5
+
+)
+
+, customers AS (
+
+    SELECT DISTINCT
+        customer_id,
+        first_name,
+        last_name
+    FROM revenue
+
+)
+
+, final AS (
+
+    SELECT DISTINCT
+        c.customer_id,
+        c.first_name,
+        c.last_name,
+        reporting_dates.reporting_period,
+        reporting_dates.reporting_date,
+        COALESCE(r.total_revenue,0) AS total_revenue
+
+    FROM customers c
+
+    CROSS JOIN reporting_dates
+
+    LEFT JOIN revenue_per_customer_period r
+        ON c.customer_id = r.customer_id
+        AND reporting_dates.reporting_period = r.reporting_period
+        AND reporting_dates.reporting_date = r.reporting_date
+
+)
+
+SELECT *
+FROM final
+
 """
 
 
@@ -53,7 +135,7 @@ client.query(query).result()
 print("Table created")
 
 
-# In[8]:
+# In[6]:
 
 
 get_ipython().system('jupyter nbconvert rep_revenue_per_customer_and_period.ipynb --to python')
